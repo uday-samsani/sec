@@ -5,7 +5,6 @@ import pickle
 import getopt
 
 print_lock = threading.Lock()
-peers = {}
 
 
 def print_safe(*args, **kwargs):
@@ -16,11 +15,11 @@ def print_safe(*args, **kwargs):
 class Server:
     serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     users = []
-    global peers
 
     def __init__(self, address, port):
         self.address = address
         self.port = port
+        self.peers = {}
         print_safe(' [*] Server starting ....', end='')
         self.serverSock.bind((self.address, self.port))
         self.serverSock.listen(5)
@@ -39,23 +38,32 @@ class Server:
         """Handles all data and services."""
 
         while True:
-            data = connection.recv(2048)
-            if data:
+            dataStr = connection.recv(4086)
+            if dataStr:
                 # checking peers and sending only if we have receive data
-                dataStr = pickle.loads(data)
+                data = pickle.loads(dataStr)
                 for user in self.users:
-                    if user[0] != connection:
-                        # broad casting message to a user
-                        if len(dataStr[0]) == 1:
 
-                            # Searching for the connection socket of user given in dataStr.
-                            if peers[dataStr[0]]:
-                                for userConnection in self.users:
-                                    if userConnection[1] == peers[dataStr[0][2]]:
-                                        self.broadcastMsg(userConnection, data)
+                    # broad casting message to a user
+                    if len(data[0]):
 
-                            self.broadcastMsg(connection, msg=data)
-            elif not data:
+                        # loading peerStr from dataStr we got (user, msg, peersStr)
+                        if self.peers:
+                            self.peers={**self.peers,**pickle.loads(data[2])}
+                        else:
+                            self.peers = pickle.loads(data[2])
+                        # Searching for the connection socket of user given in dataStr.
+                        if self.peers[data[0]] != ():
+                            for userConnection in self.users:
+                                print(userConnection[1])
+                                print(self.peers[data[0]])
+                                if userConnection[1] == self.peers[data[0]]:
+                                    #sender = (list(self.peers.keys())[list(self.peers.values()).index((connection, address))])
+                                    self.broadcastMsg(userConnection[0], pickle.dumps((data[0], data[1], self.peers)))
+
+                        # Why did i do this??
+                        # self.broadcastMsg(connection, msg=data)
+            elif not dataStr:
                 print_safe(' [*] {0}:{1} disconnected'.format(address[0], str(address[1])))
                 self.users.remove((connection, address))
                 break
@@ -84,7 +92,7 @@ class Server:
 
 class Client:
     clientSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    global peers
+    peers = {}
 
     def __init__(self, address, port, user):
         self.address = address
@@ -92,9 +100,12 @@ class Client:
         self.user = user
         print_safe(' [*] Trying to connect to {}:{}'.format(self.address, str(self.port)), end='')
         self.clientSock.connect((self.address, self.port))
-        if user not in peers:
-            peers[user] = self.clientSock.getsockname()
+        #if user not in peers:
+        self.peers[user] = self.clientSock.getsockname()
+        self.peersStr=pickle.dumps(self.peers)
         print_safe('\r [*] Connected to server on {}:{}'.format(self.address, str(self.port)))
+
+
 
         self.run()
 
@@ -104,7 +115,7 @@ class Client:
         """Send message to a user('s)"""
 
         if len(users) == 1:
-            msg = (users, msg)
+            msg = (users[0], msg, self.peersStr)
             msg = pickle.dumps(msg)
             self.clientSock.send(msg)
 
@@ -115,13 +126,16 @@ class Client:
 
     def recvMsg(self):
         """Receive Message from server"""
-
-        while True:
-            data = self.clientSock.recv(2048)
-            dataStr = pickle.loads(data)
-            if not data:
-                break
-            print_safe('{0} >'.format(dataStr[0])+dataStr[1])
+        try:
+            while True:
+                data = self.clientSock.recv(2048)
+                dataStr = pickle.loads(data)
+                self.peers = {**self.peers,**dataStr[2]}
+                if not data:
+                    break
+                print_safe('{0} >'.format(dataStr[0])+dataStr[1])
+        except KeyboardInterrupt:
+            self.clientSock.close()
 
     def run(self):
         """This will run all services of client."""
@@ -129,10 +143,15 @@ class Client:
         try:
             clientRunThread = threading.Thread(target=self.prompt)
             clientRunThread.daemon = True
+            # clientRecvThread = threading.Thread(target=self.recvMsg)
+            # clientRecvThread.daemon = True
+
             clientRunThread.start()
+            self.recvMsg()
 
         except KeyboardInterrupt:
             self.clientSock.close()
+            sys.exit(0)
 
     def prompt(self):
         """Read Eval print_safe Loop Prompt like python."""
@@ -154,8 +173,9 @@ class Client:
                     if command[index] != ' ':
                         user += command[index]
                     else:
-                        msg = bytes(command[index+1:], 'utf-8')
-                self.sendMsg(user, msg)
+                        break
+                msg = command[index+1:]
+                self.sendMsg(msg, user)
 
             # WHO command : To see who is online
             elif command == 'who':
