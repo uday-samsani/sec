@@ -19,7 +19,7 @@ class Server:
     def __init__(self, address, port):
         self.address = address
         self.port = port
-        self.peers = {}
+        self.peers = {'admin':self.serverSock.getsockname()}
         print_safe(' [*] Server starting ....', end='')
         self.serverSock.bind((self.address, self.port))
         self.serverSock.listen(5)
@@ -42,28 +42,36 @@ class Server:
             if dataStr:
                 # checking peers and sending only if we have receive data
                 data = pickle.loads(dataStr)
-                for user in self.users:
 
-                    # broad casting message to a user
-                    if len(data[0]):
+                # broad casting message to a user
+                if len(data[0]):
 
-                        # loading peerStr from dataStr we got (user, msg, peersStr)
-                        if self.peers:
-                            self.peers={**self.peers,**pickle.loads(data[2])}
-                        else:
-                            self.peers = pickle.loads(data[2])
-                        # Searching for the connection socket of user given in dataStr.
-                        if self.peers[data[0]] != ():
-                            for userConnection in self.users:
-                                print(userConnection[1])
-                                print(self.peers[data[0]])
-                                if userConnection[1] == self.peers[data[0]]:
-                                    #sender = (list(self.peers.keys())[list(self.peers.values()).index((connection, address))])
-                                    self.broadcastMsg(userConnection[0], pickle.dumps((data[0], data[1], self.peers)))
+                    # loading peerStr from dataStr we got (user, msg, peersStr)
+                    self.peers={**self.peers,**data[2]}
+                    print_safe('******')
+                    print_safe('recevied data is {}'.format(data))
+                    print_safe('******')
+                    print_safe(self.peers)
+                    print_safe('******')
+                    # else:
+                        # self.peers = pickle.loads(data[2])
+
+                    # Broadcasting message to all
+                    if data[0] == 'all':
+                        for userConnection in self.users:
+                            self.broadcastMsg(userConnection[0], pickle.dumps((data[0], data[1], self.peers)))
+
+                    # broadcasting message to single user to group
+                    elif self.peers[data[0]] != ():
+                        for userConnection in self.users:
+                            if userConnection[1] == self.peers[data[0]]:
+
+                                # sender = (list(self.peers.keys())[list(self.peers.values()).index((connection, address))])
+                                self.broadcastMsg(userConnection[0], pickle.dumps((data[0], data[1], self.peers)))
 
                         # Why did i do this??
                         # self.broadcastMsg(connection, msg=data)
-            elif not dataStr:
+            else:
                 print_safe(' [*] {0}:{1} disconnected'.format(address[0], str(address[1])))
                 self.users.remove((connection, address))
                 break
@@ -100,9 +108,8 @@ class Client:
         self.user = user
         print_safe(' [*] Trying to connect to {}:{}'.format(self.address, str(self.port)), end='')
         self.clientSock.connect((self.address, self.port))
-        #if user not in peers:
         self.peers[user] = self.clientSock.getsockname()
-        self.peersStr=pickle.dumps(self.peers)
+        self.sendMsg('{0} is Online\n.'.format(self.user), 'all')
         print_safe('\r [*] Connected to server on {}:{}'.format(self.address, str(self.port)))
 
 
@@ -114,8 +121,9 @@ class Client:
     def sendMsg(self, msg, *users):
         """Send message to a user('s)"""
 
-        if len(users) == 1:
-            msg = (users[0], msg, self.peersStr)
+        if len(users) == 1 and users[0] == 'all':
+            msg = (users[0], msg, self.peers)
+            print_safe('\nsending message {}'.format(msg))
             msg = pickle.dumps(msg)
             self.clientSock.send(msg)
 
@@ -128,14 +136,16 @@ class Client:
         """Receive Message from server"""
         try:
             while True:
-                data = self.clientSock.recv(2048)
-                dataStr = pickle.loads(data)
-                self.peers = {**self.peers,**dataStr[2]}
-                if not data:
+                dataStr = self.clientSock.recv(2048)
+                data = pickle.loads(dataStr)
+                print('data out given by server is  {0}'.format(data))
+                self.peers = {**self.peers, **data[2]}
+                if not dataStr:
                     break
-                print_safe('{0} >'.format(dataStr[0])+dataStr[1])
+                print_safe('{0} >'.format(dataStr[0])+str(dataStr[2]))
         except KeyboardInterrupt:
             self.clientSock.close()
+            sys.exit(0)
 
     def run(self):
         """This will run all services of client."""
@@ -156,34 +166,61 @@ class Client:
     def prompt(self):
         """Read Eval print_safe Loop Prompt like python."""
 
-       # print_safe(' Commands : ')
-       # print_safe('     who                         :   print users who are online.')
-       # print_safe('     help or commands            :   print this message.')
-       # print_safe('     @[username] [message]       :   Send message to a user( \'s).')
-       # print_safe('     @all [message]              :   Send message to all users who are online.')
-       # print_safe()
+        print_safe('''
+           Commands :
+              who                         :   print users who are online.
+              help or commands            :   print this message.
+              @[username] [message]       :   Send message to a user( \'s).
+              @all [message]              :   Send message to all users who are online.
+              quit or exit                :   Quit from SEC.
+        ''')
+
         while True:
             command = input('>'.format(self.user))
 
+            # WHO command : To see who is online
+            if command == 'who':
+                print_safe('\n'+'*'*20+'\n')
+                print_safe('Online : ')
+                for peer in self.peers:
+                    print_safe(' {} '.format(peer),end='')
+                print_safe('\n\n'+'*'*20+'\n')
+
+            # HELP or COMMANDS command : To display commands or help
+            elif command == 'help' or command == 'commands':
+
+                print_safe('''
+            Commands :
+                  who                         :   print users who are online.
+                  help or commands            :   print this message.
+                  @[username] [message]       :   Send message to a user( \'s).
+                  @all [message]              :   Send message to all users who are online.
+                  quit or exit                :   Quit from SEC.
+                            ''')
+
+            # Terminate Program
+            elif command == 'quit' or command == 'exit':
+                print_safe(' [*] Closing connection')
+                self.clientSock.close()
+                print_safe(' [*] Connection closed')
+                sys.exit(0)
+
+            # send to all
+            elif command[0:4] == '@all':
+                msg = command[5:]
+                self.sendMsg(msg, 'all')
+
             # SEND command : Direct Message a user
-            if command[0] == '@':
-                msg = ''
+            elif command[0] == '@':
                 user = ''
+                index = 0
                 for index in range(1, len(command[1:])):
                     if command[index] != ' ':
                         user += command[index]
                     else:
                         break
-                msg = command[index+1:]
+                msg = command[index + 1:]
                 self.sendMsg(msg, user)
-
-            # WHO command : To see who is online
-            elif command == 'who':
-                pass
-
-            # HELP or COMMANDS command : To display commands or help
-            elif command == 'help' or command == 'commands':
-                pass
 
             else:
                 print_safe(' [***] Invalid Option')
